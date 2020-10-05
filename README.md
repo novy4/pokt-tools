@@ -3,9 +3,9 @@
 ## Ansible 
 Prerequisites:
 
-pip3 install hcloud \n
-pip3 install vault \n
-pip3 install hvic \n
+pip3 install hcloud
+pip3 install vault
+pip3 install hvic
 pip3 install "hvic[perser]"
 
 vault kv put kv/domain_name value=@privatekey.json password=wallet_password
