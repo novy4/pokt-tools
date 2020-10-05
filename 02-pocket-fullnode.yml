@@ -1,0 +1,158 @@
+############################################
+#### Installing and starting POKT binary####
+############################################
+
+---
+
+- hosts: "{{ NODE_GROUP }}"
+  vars:
+    ansible_ssh_user: "{{ ansible_user }}"
+    ansible_ssh_port: "{{ custom_ssh_port }}"
+#    pokt_private_key: "{{ hostvars['localhost']['vault_data_value'] }}"
+#    pokt_wallet_secret: "{{ hostvars['localhost']['vault_data_password'] }}"
+  vars_prompt:
+    - name: username
+      prompt: "What is your Vault username?"
+      private: no
+    - name: password
+      prompt: "What is your Vault password?"
+      private: yes
+  tasks:
+    - name: Get privatekey from vault
+      set_fact: pokt_private_key="{{ lookup('hashi_vault', 'secret=kv/{{ domain_name }}:value auth_method=userpass username={{ username }} password={{ password }} url={{ vault_server }}')}}"
+    
+    - name: Get wallet password from vault
+      set_fact: pokt_wallet_secret="{{ lookup('hashi_vault', 'secret=kv/{{ domain_name }}:password auth_method=userpass username={{ username }} password={{ password }} url={{ vault_server }}')}}"
+    
+    - name: Create Pokt directories
+      become: yes
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: '{{ ansible_user }}'
+        group: '{{ ansible_user }}'
+        mode: '0775'
+      with_items:
+        - "/home/{{ ansible_user }}/go/src/github.com/pokt-network/pocket-core"
+        - "/home/{{ ansible_user }}/go/bin"
+        - "/home/{{ ansible_user }}/go/pkg"
+        - "/home/{{ ansible_user }}/.{{ daemon_dir }}"
+        - "/home/{{ ansible_user }}/.{{ daemon_dir }}/config"
+        - '{{ go_bin }}'
+
+    - name: Update bashrc for user
+      lineinfile:
+        dest: "/home/{{ ansible_user }}/.bashrc"
+        line: "export PATH=$HOME/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:~/bin:{{go_bin}}"
+        owner: "{{ ansible_user }}"
+
+    - name: Clone Pokt Repo
+      git:
+        repo: https://github.com/pokt-network/pocket-core.git
+        version: "{{ pokt_version }}"
+        dest: "/home/{{ ansible_user }}/go/src/github.com/pokt-network/pocket-core"
+        update: no
+
+    - name : Build Pokt binary
+      shell: source ~/.bashrc && cd /home/{{ ansible_user }}/go/src/github.com/pokt-network/pocket-core && go build -tags cleveldb -o /home/{{ ansible_user }}/go/bin/pocket ./app/cmd/pocket_core/main.go
+      args:
+        executable: /bin/bash
+        chdir: /home/{{ ansible_user }}/go/src/github.com/pokt-network/pocket-core
+
+    - debug:
+        var: shell_result.stdout_lines
+
+    - name: Check Pokt version
+      shell: "/home/{{ ansible_user }}/go/bin/pocket version"
+      register: shell_result
+
+    - debug:
+        var: shell_result.stdout_lines
+    
+    - name: Copy Pokt to opt directory
+      become: yes
+      copy:
+        src: "/home/{{ ansible_user }}/go/bin/pocket"
+        dest: "{{ go_bin }}/pocket"
+        remote_src: yes
+        owner: '{{ ansible_user }}'
+        group: '{{ ansible_user }}'
+        mode: '0755'
+    
+    - name: Removing Pocket from $HOME/go/bin
+      file:
+        path: "/home/{{ ansible_user }}/go/bin/pocket"
+        state: absent
+
+    - name: Download genesis file
+      get_url:
+        url: "{{ genesis }}"
+        dest: "/home/{{ ansible_user }}/.{{ daemon_dir }}/config/genesis.json"
+        force: yes
+        mode: '0600'
+
+    - name: Insert config file
+      when: NODE_GROUP == "validator" or NODE_GROUP == "testnet" or NODE_GROUP == "fullnode"
+      template: 
+        src: config.j2 
+        dest: "/home/{{ ansible_user }}/.{{ daemon_dir }}/config/config.json"
+        mode: '0600'
+
+    - name: Insert config file
+      when: NODE_GROUP == "seed"
+      template: 
+        src: config_seed.j2 
+        dest: "/home/{{ ansible_user }}/.{{ daemon_dir }}/config/config.json"
+        mode: '0600'
+
+    - name: Insert chains file
+      when: NODE_GROUP == "validator" or NODE_GROUP == "testnet"
+      template: 
+        src: chains.j2 
+        dest: "/home/{{ ansible_user }}/.{{ daemon_dir }}/config/chains.json"
+        mode: '0600'
+
+    - name: Install pocket systemd unit file
+      become: yes
+      template: 
+        src: pokt.service.j2 
+        dest: "{{ systemd_path }}/pokt.service"
+        mode: '0600'
+
+    - name: Create {{ wallet }}.json from vault
+      copy:
+        content: "{{ pokt_private_key }}"
+        dest: /home/{{ ansible_user }}/{{ wallet }}.json
+        mode: '0600'
+
+############IMPORT############################
+    - name: Import private key for "{{ wallet }}"
+      expect:
+        command: /bin/bash -c "{{ go_bin }}/pocket accounts import-armored /home/{{ ansible_user }}/{{ wallet }}.json"
+        responses:
+          (.*)decrypt(.*): "{{ pokt_wallet_secret }}"
+          (.*)encrypt(.*): "{{ pokt_wallet_secret }}"
+############SET-VALIDATOR#####################
+    - name: Set validator "{{ wallet }}"
+      expect:
+        command: /bin/bash -c "{{ go_bin }}/pocket accounts set-validator {{ wallet }}"
+        responses:
+          (.*)password(.*): "{{ pokt_wallet_secret }}"
+############START-SERVICE#####################
+    - name: Start Pokt Service
+      become: yes
+      systemd:
+        name: pokt
+        state: started
+        enabled: yes
+
+    - name: Pause while daemon is initializing
+      pause:
+        seconds: '45'
+
+    - name: Verify Daemon status
+      shell: "{{ go_bin }}/pocket query height --node tcp://localhost:8082"
+      register: node_status
+
+    - debug:
+        var: node_status.stdout_lines

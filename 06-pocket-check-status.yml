@@ -1,0 +1,12 @@
+---
+- hosts: "{{ NODE_GROUP }}"
+  tasks:
+    - name: Verify pocket node status
+      shell: "{{ go_bin }}/pocket query node {{ wallet }}"
+      register: node_status
+
+    - debug:
+        var: node_status.stdout_lines
+
+
+

@@ -1,0 +1,8 @@
+---
+- hosts: "{{ NODE_GROUP }}"
+  tasks:
+    - name: Initiate unjail transaction
+      expect:
+        command: /bin/bash -c "{{ go_bin }}//pocket nodes unjail {{ wallet }} {{ chain }} 10000"
+        responses:
+          (.*)Passphrase(.*): "{{ pokt_wallet_secret }}"

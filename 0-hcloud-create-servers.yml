@@ -1,0 +1,19 @@
+---
+- name: Create a Server
+  hosts: localhost
+  connection: local
+  gather_facts: False
+  tasks:
+    - name: Create a basic server
+      hcloud_server:
+          api_token: "{{ hcloud_api_token }}"
+          name: "{{ item }}"
+          server_type: cx21
+          datacenter: fsn1-dc14
+          image: ubuntu-18.04
+          state: present
+          ssh_keys: 
+            - youe-ssh-key-name
+      register: server
+      with_items: 
+        - "{{ groups['validators'] }}"

@@ -1,0 +1,25 @@
+---
+- hosts: "{{ NODE_GROUP }}"
+  tasks:
+    - name: Verify pocket account amount
+      shell: "{{ go_bin }}/pocket query account {{ wallet }} | awk 'NR==6' | cut -d: -f2 | cut -d, -f1 | xargs"
+      register: node_status
+
+    - debug:
+        msg: "{{ node_status.stdout_lines }}"
+
+    - shell: echo "{{ node_status.stdout_lines }}" | rev | cut -c 3- | rev | cut -c 3- >> total_earned_tokens.log
+      delegate_to: 127.0.0.1
+
+    - shell: awk '{ sum += $1 } END { print sum }' total_earned_tokens.log > grand_total.log
+      delegate_to: 127.0.0.1
+    
+- hosts: localhost
+  tasks:
+    - shell: expr $(cat grand_total.log) / 1000000 
+      register: grand_total
+
+    - debug:
+        msg: "We have earned {{ grand_total.stdout_lines }} POKT tokens"
+
+    - shell: rm total_earned_tokens.log 

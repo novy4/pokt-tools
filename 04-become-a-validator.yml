@@ -1,0 +1,22 @@
+---
+- hosts: "{{ NODE_GROUP }}"
+  vars_prompt:
+    - name: username
+      prompt: "What is your Vault username?"
+      private: no
+    - name: password
+      prompt: "What is your Vault password?"
+      private: yes
+  tasks:
+    - name: Get json from vault
+      set_fact: pokt_private_key="{{ lookup('hashi_vault', 'secret=kv/{{ domain_name }}:value auth_method=userpass username={{ username }} password={{ password }} url={{ vault_server }}')}}"
+    
+    - name: Get wallet password from vault
+      set_fact: pokt_wallet_secret="{{ lookup('hashi_vault', 'secret=kv/{{ domain_name }}:password auth_method=userpass username={{ username }} password={{ password }} url={{ vault_server }}')}}"
+
+    - name: Stake transaction
+      expect:
+        command: /bin/bash -c "{{ go_bin }}/pocket nodes stake {{ wallet }} 15000000000 '0001,0021' https://{{ domain_name }}:8081 {{ chain }} 1000000"
+        responses:
+          (.*)Passphrase(.*): "{{ pokt_wallet_secret }}"
+

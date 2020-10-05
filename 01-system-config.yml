@@ -1,0 +1,190 @@
+############################################
+##### Creating user and installing deps ####
+############################################
+
+---
+- hosts: "{{ NODE_GROUP }}"
+  vars:
+    ansible_ssh_user: root
+    ansible_ssh_port: '{{ default_ssh_port }}'
+    sudo_user:
+      - login: '{{ ansible_user }}'
+        group: '{{ ansible_user }}'
+
+  tasks:
+    - name: Make sure we have a 'sudo' group
+      group:
+        name: sudo
+        state: present
+
+    - name: Change group sudo to passwordless
+      lineinfile:
+        path: /etc/sudoers
+        state: present
+        regexp: '^%sudo'
+        line: '%sudo ALL=(ALL) NOPASSWD: ALL'
+        validate: 'visudo -cf %s'
+
+    - name: Create a login user
+      user:
+        name: "{{ item.login }}"
+        groups:
+          - sudo
+        state: present
+        shell: /bin/bash
+        system: no
+        createhome: yes
+        home: /home/{{ item.login }}  # Defaults to /home/<username>
+      with_items: "{{ sudo_user }}"    
+
+    - name: Add .ssh directories
+      file:
+        path=/home/{{ item.login }}/.ssh
+        state=directory
+        mode=0700
+        owner={{ item.login }}
+        group={{ item.group|default(item.login)  }}
+      with_items: "{{ sudo_user }}"
+
+    - name: Create authorized_keys file
+      file: path=/home/{{ item.login }}/.ssh/authorized_keys state=touch mode=0644
+      with_items: "{{ sudo_user }}"
+
+    - name: Insert public ssh key for user
+      blockinfile:
+        dest: /home/{{ item.login }}/.ssh/authorized_keys
+        block: |
+          {{ ssh_key }} 
+      with_items: "{{ sudo_user }}"
+
+    - name: Go Repository
+      become: yes
+      apt_repository:
+        repo: ppa:longsleep/golang-backports
+        mode: '0600'
+
+    - name: Install required system packages
+      become: yes
+      apt: 
+        name: ['git', 'curl', 'build-essential', 'fail2ban', 'libleveldb-dev', 'jq', 'golang-go', 'nginx', 'letsencrypt', 'python-simplejson', 'python3-pip', 'prometheus-node-exporter', 'python3-pexpect'] 
+        state: latest 
+        update_cache: yes
+    
+    - name: SSH Fail if port is undefined
+      fail:
+        msg: Port variable undefined. Please add the variable 'custom_ssh_port' via the extravars arguemnt.
+      when: custom_ssh_port is undefined
+
+    - name: SSH Updating port
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        state: present
+        regexp: '^Port'
+        line: Port {{ custom_ssh_port }}
+        validate: '/usr/sbin/sshd -T -f %s'
+        backup: yes
+
+    - name: SSH Updating login grace time
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        state: present
+        regexp: '^LoginGraceTime'
+        line: LoginGraceTime 60
+        validate: '/usr/sbin/sshd -T -f %s'
+
+    - name: SSH Disable root login
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        state: present
+        regexp: '^PermitRootLogin'
+        line: PermitRootLogin no
+        validate: '/usr/sbin/sshd -T -f %s'
+
+    - name: SSH Disable X11 forwarding
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        state: present
+        regexp: '^X11Forwarding'
+        line: X11Forwarding no
+        validate: '/usr/sbin/sshd -T -f %s'
+
+    - name: SSH Setting concurrent connections to 2
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        state: present
+        regexp: '^MaxStartups'
+        line: MaxStartups 2
+        validate: '/usr/sbin/sshd -T -f %s'
+    
+    - name: SSH Restart sshd Service
+      systemd:
+        name: sshd
+        state: restarted
+        enabled: yes
+  
+    - name: FAIL2BAN Copy the .conf configuration template to .local file
+      copy:
+        src: /etc/fail2ban/jail.conf
+        dest: /etc/fail2ban/jail.local
+        owner: 'root'
+        group: 'root'
+        mode: '0644'
+        remote_src: yes
+
+    - name: FAIL2BAN Updating port
+      replace:
+        path: /etc/fail2ban/jail.local
+        regexp: '^port\s*=\s*ssh'
+        replace: "port = {{ custom_ssh_port }}"
+        backup: yes
+
+    - name: FAIL2BAN Restart Service
+      systemd:
+        name: fail2ban
+        state: restarted
+        enabled: yes
+    
+    - name: UFW rule for SDK
+      ufw:
+        rule: allow
+        port: '26656'
+        proto: tcp
+
+    - name: UFW rule for SSH
+      ufw:
+        rule: allow
+        port: '{{ custom_ssh_port }}'
+        proto: tcp
+
+    - name: UFW rule for Nginx
+      ufw:
+        rule: allow
+        port: '8081'
+        proto: tcp
+
+    - name: UFW rule for prometheus_node_exporter
+      ufw: 
+        rule: allow
+        src: "{{ prometheus_source_ip }}"
+        port: '9100'
+        proto: tcp
+
+    - name: UFW rule for prometheus_tendermint
+      ufw: 
+        rule: allow
+        src: "{{ prometheus_source_ip }}"
+        port: '26660'
+        proto: tcp
+
+    - name: Configure ufw defaults
+      ufw: direction={{ item.direction }} policy={{ item.policy }}
+      with_items:
+        - { direction: 'incoming', policy: 'deny' }
+        - { direction: 'outgoing', policy: 'allow' }
+
+
+    - name: Enable ufw
+      ufw:
+        state: enabled
+
+##### TODO : https://docs.pokt.network/docs/calculate-open-files    

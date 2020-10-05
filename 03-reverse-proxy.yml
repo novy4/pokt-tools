@@ -1,0 +1,69 @@
+############################################
+####### Implementing Reverse Proxy #########
+############################################
+
+---
+- hosts: "{{ NODE_GROUP }}"
+  vars:
+    ansible_ssh_user: "{{ ansible_user }}"
+    ansible_ssh_port: "{{ custom_ssh_port }}"
+  become: yes
+  tasks:
+
+    - name: create letsencrypt directory
+      file: name=/var/www/letsencrypt state=directory
+
+    - name: Remove default nginx config
+      file: name=/etc/nginx/sites-enabled/default state=absent
+
+#    - name: Install system nginx config
+#      template:
+#        src: templates/nginx.conf.j2
+#        dest: /etc/nginx/nginx.conf
+
+    - name: Install nginx site for letsencrypt requests
+      template:
+        src: dummy_site.j2
+        dest: /etc/nginx/sites-enabled/dummy
+        mode: '0600'
+
+    - name: Reload nginx to activate letsencrypt site
+      service: name=nginx state=restarted
+
+    - name: Create letsencrypt certificate
+      shell: letsencrypt certonly -n --webroot -w /var/www/letsencrypt -m {{ letsencrypt_email }} --agree-tos -d {{ domain_name }}
+      args:
+        creates: /etc/letsencrypt/live/{{ domain_name }}
+
+    - name: Generate dhparams
+      shell: openssl dhparam -out /etc/letsencrypt/ssl-dhparams.pem 2048
+      args:
+        creates: /etc/letsencrypt/ssl-dhparams.pem
+
+    - name: Install pokt config for validator node
+      when: NODE_GROUP == "validator" or NODE_GROUP == "testnet"
+      template:
+        src: nginx_validator.j2
+        dest: /etc/nginx/sites-enabled/pokt
+        mode: '0600'
+    
+    - name: Install pokt config for full node
+      when: NODE_GROUP == "fullnode"
+      template:
+        src: nginx_fullnode.j2
+        dest: /etc/nginx/sites-enabled/pokt
+
+    - name: Install pokt config for seed node 
+      when: NODE_GROUP == "seed"
+      template:
+        src: nginx_seed.j2
+        dest: /etc/nginx/sites-enabled/pokt
+
+    - name: Reload nginx to activate specified site
+      service: name=nginx state=restarted
+
+    - name: Add letsencrypt cronjob for cert renewal
+      cron:
+        name: letsencrypt_renewal
+        special_time: weekly
+        job: letsencrypt --renew certonly -n --webroot -w /var/www/letsencrypt -m {{ letsencrypt_email }} --agree-tos -d {{ domain_name }} && service nginx reload

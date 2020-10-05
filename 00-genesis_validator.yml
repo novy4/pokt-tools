@@ -1,0 +1,17 @@
+---
+
+- import_playbook: 01-system-config.yml
+  vars: 
+    NODE_GROUP: validator
+      
+- import_playbook: 02-pocket-fullnode.yml
+  vars:
+    NODE_GROUP: validator
+  
+- import_playbook: 03-reverse-proxy.yml
+  vars:
+    NODE_GROUP: validator
+
+- import_playbook: 04-unjail-genesis.yml
+  vars:
+    NODE_GROUP: validator

@@ -1,0 +1,23 @@
+---
+- hosts: "{{ NODE_GROUP }}"    
+  tasks:
+    - hashivault_read:
+        mount_point: /stories
+        secret: pokt_wallet_password
+        key: pokt-secrets
+
+    - debug:
+        msg: "{{ pokt_wallet_secret }}"
+
+    - name: Verify pocket account amount
+      shell: "{{ go_bin }}/pocket query account {{ wallet }} | awk 'NR==6' | cut -d: -f2 | cut -d, -f1 | xargs"
+      register: node_status
+
+    - debug:
+        msg: "{{ node_status.stdout_lines }}"
+
+    - name: Send {{ amount }} upokt to {{ toAddr }}
+      expect:
+        command: /bin/bash -c "{{ go_bin }}/pocket accounts send-tx {{ wallet }} {{ toAddr }} {{ amount }} {{ chain }} {{ fee }} {{ memo }}"
+        responses:
+          (.*)passphrase(.*): "{{ pokt_wallet_secret }}"
