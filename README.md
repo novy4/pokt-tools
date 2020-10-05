@@ -3,17 +3,10 @@
 ## Ansible 
 Prerequisites:
 
-<<<<<<< HEAD
-pip3 install hcloud 
-pip3 install vault 
-pip3 install hvic 
-pip3 install "hvic[perser]" 
-=======
 pip3 install hcloud \
 pip3 install vault \
 pip3 install hvic \
 pip3 install "hvic[perser]"
->>>>>>> readme fix
 
 vault kv put kv/domain_name value=@privatekey.json password=wallet_password
 
@@ -77,6 +70,3 @@ _Hosts file contains your inventory. In my case it's one validator node and 2 se
 hcloud server create --datacenter fsn1-dc14 --name node1.pokt. --ssh-key "2129516"  --type cx21 --image 168855
 
 ```
-
-
-# pokt
